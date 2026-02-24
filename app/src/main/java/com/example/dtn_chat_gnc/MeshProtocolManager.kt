@@ -44,7 +44,6 @@ class MeshProtocolManager(
             physicalNeighbors.add(neighborNodeId)
             onLog("[NET] Connesso: $neighborName ($neighborNodeId)")
 
-            // AGGIORNAMENTO 1: Ricostruzione immediata della rete ad ogni nuova connessione
             startNewDfsRound(true)
             restartElectionTimer()
         }
@@ -57,7 +56,6 @@ class MeshProtocolManager(
         reverseEndpointMap.remove(endpointId)
         onLog("[NET] Disconnesso: $nodeId")
 
-        // AGGIORNAMENTO 1: Ricostruzione immediata della rete ad ogni disconnessione
         startNewDfsRound(true)
         updateUiPeers(lastKnownTree)
     }
@@ -125,6 +123,12 @@ class MeshProtocolManager(
                 val isSameRound = (packet.timestamp == activeBundleTimestamp && packet.sourceId == activeBundleSourceId)
 
                 if (isNewer || (packet.timestamp == activeBundleTimestamp && packet.sourceId > activeBundleSourceId)) {
+
+                    // --- MODIFICA UI: AVVISO CAMBIO LEADER ---
+                    if (activeBundleSourceId == myId && packet.sourceId != myId) {
+                        onLog("[DFS] Persa leadership. Nuovo Leader: ${packet.sourceId.take(4)}")
+                    }
+
                     activeBundleTimestamp = packet.timestamp
                     activeBundleSourceId = packet.sourceId
                     currentDfsParentNodeId = null
@@ -178,7 +182,8 @@ class MeshProtocolManager(
                 sendToNode(currentDfsParentNodeId!!, newPacket)
             } else if (packet.sourceId == myId) {
                 onBossElected(true)
-                onLog("[DFS] RE DELLA RETE")
+                // --- MODIFICA UI: LOG PULITO SENZA ALBERO ---
+                onLog("[DFS] Elezione completata. Sono il LEADER.")
                 scope.launch { delay(15000); startNewDfsRound(true) }
             }
         }
@@ -212,7 +217,6 @@ class MeshProtocolManager(
                 currentDfsParentNodeId
             }
 
-            // Se la rotta è valida fisicamente, inoltriamo
             if (nextHop != null && endpointMap.containsKey(nextHop)) {
                 val packet = MeshPacket(
                     type = PacketType.MESSAGE, sourceId = myId, senderId = myId, senderName = myName,
@@ -224,9 +228,6 @@ class MeshProtocolManager(
             }
         }
 
-        // AGGIORNAMENTO 2: Failsafe DTN.
-        // Se non è nell'albero, OPPURE la rotta si è interrotta improvvisamente (NextHop null/invalido),
-        // il messaggio non viene scartato ma convertito in DTN.
         if (!routedSuccessfully) {
             onLog("[DTN] Rotta non disponibile per ${msg.destinationId.take(4)}. Passo a DTN.")
             if (msg.senderId == myId && !msg.isDtn) {
