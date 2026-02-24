@@ -43,6 +43,9 @@ class MeshProtocolManager(
         if (!physicalNeighbors.contains(neighborNodeId)) {
             physicalNeighbors.add(neighborNodeId)
             onLog("[NET] Connesso: $neighborName ($neighborNodeId)")
+
+            // AGGIORNAMENTO 1: Ricostruzione immediata della rete ad ogni nuova connessione
+            startNewDfsRound(true)
             restartElectionTimer()
         }
     }
@@ -53,7 +56,9 @@ class MeshProtocolManager(
         endpointMap.remove(nodeId)
         reverseEndpointMap.remove(endpointId)
         onLog("[NET] Disconnesso: $nodeId")
-        if (nodeId == currentDfsParentNodeId) handleOrphanScenario()
+
+        // AGGIORNAMENTO 1: Ricostruzione immediata della rete ad ogni disconnessione
+        startNewDfsRound(true)
         updateUiPeers(lastKnownTree)
     }
 
@@ -147,7 +152,6 @@ class MeshProtocolManager(
         val sender = packet.senderId
 
         updateUiPeers(tree)
-        checkDtnDelivery()
 
         val myNodeInTree = tree.findNode(myId) ?: return
         if (myNodeInTree.isReady) { if (packet.sourceId == myId) { } else return }
@@ -176,10 +180,10 @@ class MeshProtocolManager(
                 onBossElected(true)
                 onLog("[DFS] RE DELLA RETE")
                 scope.launch { delay(15000); startNewDfsRound(true) }
-            } else {
-                handleOrphanScenario()
             }
         }
+
+        checkDtnDelivery()
     }
 
     fun sendMessage(destId: String, content: String) {
@@ -193,47 +197,55 @@ class MeshProtocolManager(
             return
         }
 
-        // SOPPRESSIONE DTN: se lo vedo passare verso la destinazione, lo cancello dalla mia coda
         val removed = dtnQueue.removeAll { it.id == msg.id }
         if (removed) onDtnQueueUpdated(dtnQueue.size)
 
         val destInTree = lastKnownTree?.findNode(msg.destinationId) != null
+        var routedSuccessfully = false
 
         if (destInTree) {
-            // Instradamento normale
-            val nextHop = if (downstreamRoutingTable.containsKey(msg.destinationId)) downstreamRoutingTable[msg.destinationId] else currentDfsParentNodeId
+            val nextHop = if (endpointMap.containsKey(msg.destinationId)) {
+                msg.destinationId
+            } else if (downstreamRoutingTable.containsKey(msg.destinationId)) {
+                downstreamRoutingTable[msg.destinationId]
+            } else {
+                currentDfsParentNodeId
+            }
+
+            // Se la rotta è valida fisicamente, inoltriamo
             if (nextHop != null && endpointMap.containsKey(nextHop)) {
                 val packet = MeshPacket(
                     type = PacketType.MESSAGE, sourceId = myId, senderId = myId, senderName = myName,
                     timestamp = System.currentTimeMillis(), messageData = msg.copy(isDtn = false)
                 )
                 sendToNode(nextHop, packet)
+                onLog("[NET] Inviato MSG a ${msg.destinationId.take(4)} via ${nextHop.take(4)}")
+                routedSuccessfully = true
             }
-        } else {
-            // DESTINATARIO OFFLINE - Logica DTN
+        }
+
+        // AGGIORNAMENTO 2: Failsafe DTN.
+        // Se non è nell'albero, OPPURE la rotta si è interrotta improvvisamente (NextHop null/invalido),
+        // il messaggio non viene scartato ma convertito in DTN.
+        if (!routedSuccessfully) {
+            onLog("[DTN] Rotta non disponibile per ${msg.destinationId.take(4)}. Passo a DTN.")
             if (msg.senderId == myId && !msg.isDtn) {
-                // Io sono il mittente originale: avvio la FASE SPRAY
                 initiateSprayAndWait(msg)
             } else {
-                // Sono un nodo ponte (Wait Phase): metto in coda e aspetto
                 enqueueDtnMessage(msg)
             }
         }
     }
 
-    // --- NUOVA FASE: SPRAY AND WAIT ---
     private fun initiateSprayAndWait(msg: MessageData) {
-        // Calcolo L = sqrt(N)
         val n = lastKnownTree?.getAllIds()?.size ?: 1
         var L = sqrt(n.toDouble()).toInt()
-        if (L < 1) L = 1 // Minimo 1 copia (per noi stessi)
+        if (L < 1) L = 1
 
         onLog("[DTN] Dest. Offline. Rete N=$n, genero L=$L copie.")
 
-        // 1. Tengo 1 copia per me stesso
         enqueueDtnMessage(msg)
 
-        // 2. Spruzzo le restanti (L - 1) copie ai miei vicini fisici (se ci sono)
         val sprayCount = L - 1
         if (sprayCount > 0) {
             val neighborsToSpray = physicalNeighbors.shuffled().take(sprayCount)
@@ -241,14 +253,12 @@ class MeshProtocolManager(
             neighborsToSpray.forEach { neighborId ->
                 val packet = MeshPacket(
                     type = PacketType.MESSAGE,
-                    sourceId = myId,
-                    senderId = myId,
-                    senderName = myName,
+                    sourceId = myId, senderId = myId, senderName = myName,
                     timestamp = System.currentTimeMillis(),
-                    messageData = msg.copy(isDtn = true) // Imposto il flag DTN per i vicini
+                    messageData = msg.copy(isDtn = true)
                 )
                 sendToNode(neighborId, packet)
-                onLog("[DTN] Copia 'spruzzata' a ${neighborId.take(4)}")
+                onLog("[DTN] Copia spruzzata a ${neighborId.take(4)}")
             }
         }
     }
@@ -258,7 +268,7 @@ class MeshProtocolManager(
 
         if (dtnQueue.size >= MAX_DTN_QUEUE_SIZE) {
             val oldest = dtnQueue.removeAt(0)
-            delegateDtnBundle(oldest) // Patata bollente FIFO
+            delegateDtnBundle(oldest)
         }
 
         dtnQueue.add(msg.copy(isDtn = true))
@@ -269,7 +279,7 @@ class MeshProtocolManager(
         val neighbors = physicalNeighbors.toList()
         if (neighbors.isNotEmpty()) {
             val chosenPeer = neighbors.random()
-            onLog("[DTN] Buffer Pieno! Delego bundle vecchio a ${chosenPeer.take(4)}")
+            onLog("[DTN] Buffer Pieno! Delego bundle a ${chosenPeer.take(4)}")
             val packet = MeshPacket(
                 type = PacketType.MESSAGE, sourceId = myId, senderId = myId, senderName = myName,
                 timestamp = System.currentTimeMillis(), messageData = msg.copy(isDtn = true)
@@ -280,10 +290,9 @@ class MeshProtocolManager(
 
     private fun checkDtnDelivery() {
         val tree = lastKnownTree ?: return
-        val toDeliver = dtnQueue.filter { tree.findNode(it.destinationId) != null }
+        val toDeliver = dtnQueue.filter { tree.findNode(it.destinationId) != null }.toList()
+
         toDeliver.forEach { msg ->
-            dtnQueue.remove(msg)
-            onDtnQueueUpdated(dtnQueue.size)
             onLog("[DTN] Target ${msg.destinationId.take(4)} online! Consegna in corso...")
             routeMessage(msg)
         }
@@ -300,6 +309,4 @@ class MeshProtocolManager(
     private fun sendToNode(nodeId: String, packet: MeshPacket) {
         endpointMap[nodeId]?.let { sendFunc(it, packet.toJson()) }
     }
-
-    private fun handleOrphanScenario() { startNewDfsRound(true) }
 }
