@@ -22,7 +22,8 @@ data class MessageData(
     val senderId: String,
     val destinationId: String,
     val content: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isDtn: Boolean = false
 )
 
 /**

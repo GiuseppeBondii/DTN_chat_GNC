@@ -1,7 +1,6 @@
 package com.example.dtn_chat_gnc
 
 import android.content.Context
-import androidx.lifecycle.LifecycleCoroutineScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -9,7 +8,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-// Semplice data class per la UI
 data class Peer(val id: String, val name: String)
 
 class DtnMeshClient(
@@ -22,18 +20,20 @@ class DtnMeshClient(
     private val _logs = MutableSharedFlow<String>()
     val logs: SharedFlow<String> = _logs
 
-    // NUOVO: Lista di oggetti Peer (ID + Nome)
     private val _peers = MutableStateFlow<List<Peer>>(emptyList())
     val peers: StateFlow<List<Peer>> = _peers
 
+    private val _topology = MutableStateFlow<String>("Nessuna rete")
+    val topology: StateFlow<String> = _topology
+
+    // --- ECCO LA VARIABILE CHE MANCAVA ---
+    private val _dtnQueueSize = MutableStateFlow<Int>(0)
+    val dtnQueueSize: StateFlow<Int> = _dtnQueueSize
+
     private var meshManager: MeshManager? = null
 
-    val myNodeId: String
-        get() = PrefsManager.getMyNodeId(context)
-
-    // NUOVO: Getter per il nome corrente
-    val myDisplayName: String
-        get() = PrefsManager.getDisplayName(context)
+    val myNodeId: String get() = PrefsManager.getMyNodeId(context)
+    val myDisplayName: String get() = PrefsManager.getDisplayName(context)
 
     fun start() {
         if (meshManager != null) return
@@ -44,19 +44,16 @@ class DtnMeshClient(
             onLog = { logMsg -> scope.launch { _logs.emit(logMsg) } },
             onPeersUpdated = { peerMap ->
                 scope.launch {
-                    // Convertiamo la mappa in lista e rimuoviamo noi stessi
-                    val list = peerMap.map { Peer(it.key, it.value) }
-                        .filter { it.id != myNodeId }
-                        .sortedBy { it.name }
+                    val list = peerMap.map { Peer(it.key, it.value) }.filter { it.id != myNodeId }.sortedBy { it.name }
                     _peers.emit(list)
                 }
-            }
+            },
+            onTopologyUpdated = { treeString -> scope.launch { _topology.emit(treeString) } },
+            // Passiamo il valore della coda alla variabile _dtnQueueSize
+            onDtnQueueUpdated = { size -> scope.launch { _dtnQueueSize.emit(size) } }
         )
 
-        meshManager?.setMessageListener { msg ->
-            scope.launch { _receivedMessages.emit(msg) }
-        }
-
+        meshManager?.setMessageListener { msg -> scope.launch { _receivedMessages.emit(msg) } }
         meshManager?.startMesh()
     }
 
@@ -65,10 +62,8 @@ class DtnMeshClient(
         meshManager = null
     }
 
-    // NUOVO: Funzione per cambiare nome e riavviare la rete
     fun updateName(newName: String) {
         PrefsManager.saveDisplayName(context, newName)
-        // Dobbiamo riavviare per inviare il nuovo nome agli altri (via HELLO)
         stop()
         start()
     }

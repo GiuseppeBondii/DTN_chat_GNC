@@ -30,4 +30,16 @@ object PrefsManager {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_DISPLAY_NAME, name).apply()
     }
+
+    //PER SALVARE I CONTATTI
+    fun saveKnownContact(context: Context, id: String, name: String) {
+        val prefs = context.getSharedPreferences("KnownContacts", Context.MODE_PRIVATE)
+        prefs.edit().putString(id, name).apply()
+    }
+
+    fun getKnownContacts(context: Context): Map<String, String> {
+        val prefs = context.getSharedPreferences("KnownContacts", Context.MODE_PRIVATE)
+        // Recupera tutti i contatti salvati (ID -> Nome)
+        return prefs.all.mapValues { it.value.toString() }
+    }
 }

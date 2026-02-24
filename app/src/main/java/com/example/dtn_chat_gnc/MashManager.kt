@@ -10,13 +10,16 @@ class MeshManager(
     context: Context,
     scope: CoroutineScope,
     private val onLog: (String) -> Unit,
-    private val onPeersUpdated: (Map<String, String>) -> Unit // <--- Aggiornato a Mappa
+    private val onPeersUpdated: (Map<String, String>) -> Unit,
+    private val onTopologyUpdated: (String) -> Unit,
+    // NUOVO: Aggiungiamo la callback della coda DTN
+    private val onDtnQueueUpdated: (Int) -> Unit
 ) {
     private val connectionsClient = Nearby.getConnectionsClient(context)
     private val serviceId = "com.mesh.protocol.CHAT_V1"
     private val strategy = Strategy.P2P_CLUSTER
     val myId = PrefsManager.getMyNodeId(context)
-    val myName = PrefsManager.getDisplayName(context) // <--- Leggiamo il nome
+    val myName = PrefsManager.getDisplayName(context)
 
     private var messageListener: ((MessageData) -> Unit)? = null
 
@@ -26,20 +29,17 @@ class MeshManager(
 
     private val protocol = MeshProtocolManager(
         myId = myId,
-        myName = myName, // <--- Lo passiamo al protocollo
+        myName = myName,
         scope = scope,
         sendFunc = { endpointId, json -> sendPayload(endpointId, json) },
         onLog = onLog,
         onBossElected = { },
         onAlarm = { msg -> onLog("[ALARM] $msg") },
         onMessageReceived = { msg -> messageListener?.invoke(msg) },
-        onPeersUpdated = onPeersUpdated
+        onPeersUpdated = onPeersUpdated,
+        onTopologyUpdated = onTopologyUpdated,
+        onDtnQueueUpdated = onDtnQueueUpdated // <--- NUOVO
     )
-
-    // ... (Il resto delle callback connectionLifecycleCallback e payloadCallback rimane IDENTICO a prima) ...
-    // Per brevità non lo ripeto tutto, ma assicurati di mantenere
-    // connectionLifecycleCallback e payloadCallback come nel codice precedente.
-    // L'unica differenza è che startAdvertising usa "NODE_$myId"
 
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
@@ -66,24 +66,16 @@ class MeshManager(
     }
 
     fun startMesh() {
-        startAdvertising()
-        startDiscovery()
-    }
-
-    private fun startAdvertising() {
         val options = AdvertisingOptions.Builder().setStrategy(strategy).build()
-        // Pubblicizziamo sempre con l'ID univoco per coerenza Nearby
         connectionsClient.startAdvertising("NODE_$myId", serviceId, connectionLifecycleCallback, options)
-    }
 
-    private fun startDiscovery() {
-        val options = DiscoveryOptions.Builder().setStrategy(strategy).build()
+        val discOptions = DiscoveryOptions.Builder().setStrategy(strategy).build()
         connectionsClient.startDiscovery(serviceId, object : EndpointDiscoveryCallback() {
             override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
                 connectionsClient.requestConnection(myId, endpointId, connectionLifecycleCallback)
             }
             override fun onEndpointLost(endpointId: String) {}
-        }, options)
+        }, discOptions)
     }
 
     private fun sendPayload(endpointId: String, json: String) {

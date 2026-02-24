@@ -18,8 +18,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var currentChatPartnerId = mutableStateOf<String?>(null)
     var currentChatPartnerName = mutableStateOf<String>("")
 
-    // La UI osserva questa mappa
+    // La UI osserva questa mappa per la cronologia
     val chatHistory = mutableStateMapOf<String, SnapshotStateList<ChatMessage>>()
+
+    // NUOVO: Mappa dei contatti conosciuti (ID -> Nome) osservabile dalla UI
+    val knownPeers = mutableStateMapOf<String, String>()
 
     private val _notificationEvent = MutableSharedFlow<MessageData>()
     val notificationEvent: SharedFlow<MessageData> = _notificationEvent
@@ -37,13 +40,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // 2. Ascolto messaggi dalla rete
-        viewModelScope.launch {
-            client.receivedMessages.collect { msg ->
-                addToHistory(msg.senderId, msg.content, isFromMe = false)
+        // 2. RECUPERO CONTATTI SALVATI
+        val savedContacts = PrefsManager.getKnownContacts(application.applicationContext)
+        knownPeers.putAll(savedContacts)
 
-                if (currentChatPartnerId.value != msg.senderId) {
-                    _notificationEvent.emit(msg)
+        // 3. ASCOLTO RETE E AGGIORNAMENTO
+        viewModelScope.launch {
+            // Sotto-coroutine per i messaggi ricevuti
+            launch {
+                client.receivedMessages.collect { msg ->
+                    addToHistory(msg.senderId, msg.content, isFromMe = false)
+
+                    if (currentChatPartnerId.value != msg.senderId) {
+                        _notificationEvent.emit(msg)
+                    }
+                }
+            }
+
+            // Sotto-coroutine per aggiornare i nomi dei peer online
+            launch {
+                client.peers.collect { onlinePeers ->
+                    onlinePeers.forEach { peer ->
+                        // Se incontriamo un nuovo ID o se il nome è cambiato, lo salviamo
+                        if (knownPeers[peer.id] != peer.name) {
+                            knownPeers[peer.id] = peer.name
+                            PrefsManager.saveKnownContact(application.applicationContext, peer.id, peer.name)
+                        }
+                    }
                 }
             }
         }
@@ -65,9 +88,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         chatHistory[peerId]?.add(ChatMessage(peerId, text, isFromMe))
 
-        // 3. SALVATAGGIO SU FILE (Persistenza)
-        // Creiamo una copia "pulita" della mappa da salvare
-        val mapToSave = chatHistory.toMap() // Converte in mappa standard
+        // 4. SALVATAGGIO SU FILE (Persistenza)
+        val mapToSave = chatHistory.toMap()
 
         viewModelScope.launch {
             ChatStorage.saveChats(getApplication(), mapToSave)

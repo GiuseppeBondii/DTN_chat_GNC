@@ -90,44 +90,63 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun ChatApp(viewModel: MainViewModel) {
-    val myName = viewModel.client.myDisplayName // Nome corrente
-    val peers by viewModel.client.peers.collectAsState(initial = emptyList()) // Ora è List<Peer>
+    val myName = viewModel.client.myDisplayName
+    val peers by viewModel.client.peers.collectAsState(initial = emptyList())
     val logs by viewModel.client.logs.collectAsState(initial = "")
+    val topology by viewModel.client.topology.collectAsState(initial = "Nessuna rete")
+    // NUOVO: Ascoltiamo la coda DTN
+    val dtnQueueSize by viewModel.client.dtnQueueSize.collectAsState(initial = 0)
     val currentPartnerId = viewModel.currentChatPartnerId.value
 
     var showNameDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { viewModel.startMesh() }
 
     if (showNameDialog) {
         NameEditDialog(
             currentName = myName,
             onDismiss = { showNameDialog = false },
-            onSave = { newName ->
-                viewModel.saveNewName(newName)
-                showNameDialog = false
-            }
+            onSave = { newName -> viewModel.saveNewName(newName); showNameDialog = false }
         )
     }
 
-    if (currentPartnerId == null) {
-        PeerListScreen(
-            myName = myName,
-            peers = peers,
-            onPeerClick = { peer ->
-                viewModel.currentChatPartnerId.value = peer.id
-                viewModel.currentChatPartnerName.value = peer.name
-            },
-            onStart = { viewModel.startMesh() },
-            onEditName = { showNameDialog = true },
-            logs = logs
-        )
-    } else {
-        val messages = viewModel.chatHistory[currentPartnerId] ?: emptyList()
-        ChatScreen(
-            partnerName = viewModel.currentChatPartnerName.value,
-            messages = messages,
-            onSendMessage = { text -> viewModel.sendMessage(currentPartnerId, text) },
-            onBack = { viewModel.currentChatPartnerId.value = null }
-        )
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.weight(1f)) {
+            if (currentPartnerId == null) {
+                val onlineIds = peers.map { it.id }.toSet()
+                val onlineChatted = peers.filter { viewModel.chatHistory.containsKey(it.id) }.sortedBy { it.name }
+                val onlineNew = peers.filter { !viewModel.chatHistory.containsKey(it.id) }.sortedBy { it.name }
+                val offlineChattedIds = viewModel.chatHistory.keys.filter { it !in onlineIds }
+                val offlineChatted = offlineChattedIds.map { id ->
+                    Peer(id, viewModel.knownPeers[id] ?: "Utente Sconosciuto")
+                }.sortedBy { it.name }
+
+                PeerListScreen(
+                    myName = myName,
+                    onlineChatted = onlineChatted,
+                    onlineNew = onlineNew,
+                    offlineChatted = offlineChatted,
+                    onPeerClick = { peer ->
+                        viewModel.currentChatPartnerId.value = peer.id
+                        viewModel.currentChatPartnerName.value = peer.name
+                    },
+                    onStart = { viewModel.startMesh() },
+                    onEditName = { showNameDialog = true }
+                )
+            } else {
+                val messages = viewModel.chatHistory[currentPartnerId] ?: emptyList()
+                ChatScreen(
+                    partnerName = viewModel.currentChatPartnerName.value,
+                    messages = messages,
+                    onSendMessage = { text -> viewModel.sendMessage(currentPartnerId, text) },
+                    onBack = { viewModel.currentChatPartnerId.value = null }
+                )
+            }
+        }
+
+        HorizontalDivider(color = Color.Green, thickness = 1.dp)
+        // Passiamo la variabile DTN al pannello Debug
+        DebugPanel(logs = logs, topology = topology, dtnQueueSize = dtnQueueSize)
     }
 }
 
@@ -138,25 +157,14 @@ fun NameEditDialog(currentName: String, onDismiss: () -> Unit, onSave: (String) 
         onDismissRequest = onDismiss,
         title = { Text("Modifica Nome") },
         text = { TextField(value = text, onValueChange = { text = it }) },
-        confirmButton = {
-            Button(onClick = { if(text.isNotBlank()) onSave(text) }) { Text("Salva") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Annulla") }
-        }
+        confirmButton = { Button(onClick = { if(text.isNotBlank()) onSave(text) }) { Text("Salva") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } }
     )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PeerListScreen(
-    myName: String,
-    peers: List<Peer>, // List<Peer>
-    onPeerClick: (Peer) -> Unit,
-    onStart: () -> Unit,
-    onEditName: () -> Unit,
-    logs: String
-) {
+fun PeerListScreen(myName: String, onlineChatted: List<Peer>, onlineNew: List<Peer>, offlineChatted: List<Peer>, onPeerClick: (Peer) -> Unit, onStart: () -> Unit, onEditName: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -171,30 +179,37 @@ fun PeerListScreen(
         }
     ) { p ->
         Column(Modifier.padding(p).fillMaxSize()) {
-            Text("Utenti Vicini (${peers.size})", Modifier.padding(16.dp), fontWeight = FontWeight.Bold)
-            if (peers.isEmpty()) {
-                Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
-                    Text("Nessuno connesso.", color = Color.Gray)
+            LazyColumn(Modifier.weight(1f)) {
+                if (onlineChatted.isNotEmpty()) {
+                    item { Text("Online (Chat Recenti)", Modifier.padding(16.dp, 16.dp, 16.dp, 8.dp), fontWeight = FontWeight.Bold, color = Color.Green) }
+                    items(onlineChatted) { peer -> PeerItem(peer, onPeerClick, isOffline = false) }
+                }
+                if (onlineNew.isNotEmpty()) {
+                    item { Text("Online (Nuovi)", Modifier.padding(16.dp, 16.dp, 16.dp, 8.dp), fontWeight = FontWeight.Bold) }
+                    items(onlineNew) { peer -> PeerItem(peer, onPeerClick, isOffline = false) }
+                }
+                if (offlineChatted.isNotEmpty()) {
+                    item { Text("Offline (Storico)", Modifier.padding(16.dp, 16.dp, 16.dp, 8.dp), fontWeight = FontWeight.Bold, color = Color.Gray) }
+                    items(offlineChatted) { peer -> PeerItem(peer, onPeerClick, isOffline = true) }
+                }
+                if (onlineChatted.isEmpty() && onlineNew.isEmpty() && offlineChatted.isEmpty()) {
+                    item { Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) { Text("Nessuna chat e nessuno connesso.", color = Color.Gray) } }
                 }
             }
-            LazyColumn(Modifier.weight(1f)) {
-                items(peers) { peer -> PeerItem(peer, onPeerClick) }
-            }
-            Divider(color = Color.DarkGray)
-            Text(logs.takeLast(500), Modifier.height(120.dp).padding(8.dp).background(Color(0xFF121212)).padding(4.dp), fontSize = 10.sp, color = Color.Green, lineHeight = 12.sp)
         }
     }
 }
 
 @Composable
-fun PeerItem(peer: Peer, onClick: (Peer) -> Unit) {
-    Card(Modifier.fillMaxWidth().padding(8.dp).clickable { onClick(peer) }, colors = CardDefaults.cardColors(containerColor = Color(0xFF2D2D2D))) {
+fun PeerItem(peer: Peer, onClick: (Peer) -> Unit, isOffline: Boolean = false) {
+    val alpha = if (isOffline) 0.5f else 1f
+    Card(Modifier.fillMaxWidth().padding(8.dp).clickable { onClick(peer) }, colors = CardDefaults.cardColors(containerColor = Color(0xFF2D2D2D).copy(alpha = alpha))) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Person, null, tint = Color.White)
+            Icon(Icons.Default.Person, null, tint = Color.White.copy(alpha = alpha))
             Spacer(Modifier.width(16.dp))
             Column {
-                Text(peer.name, fontWeight = FontWeight.Bold, color = Color.White)
-                Text("ID: ${peer.id.take(4)}...", fontSize = 10.sp, color = Color.Gray)
+                Text(peer.name, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = alpha))
+                Text("ID: ${peer.id.take(4)}...", fontSize = 10.sp, color = Color.Gray.copy(alpha = alpha))
             }
         }
     }
@@ -228,5 +243,28 @@ fun MessageBubble(msg: ChatMessage) {
     val shape = if (msg.isFromMe) RoundedCornerShape(16.dp, 16.dp, 2.dp, 16.dp) else RoundedCornerShape(16.dp, 16.dp, 16.dp, 2.dp)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = align) {
         Box(Modifier.padding(4.dp).background(color, shape).padding(12.dp)) { Text(msg.text, color = Color.White) }
+    }
+}
+
+@Composable
+fun DebugPanel(logs: String, topology: String, dtnQueueSize: Int) {
+    Row(modifier = Modifier.fillMaxWidth().height(200.dp).background(Color(0xFF121212))) {
+        Column(modifier = Modifier.weight(1.5f).padding(8.dp)) {
+            Text("LOG DI SISTEMA", color = Color.Gray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = logs.takeLast(800), color = Color.Green, fontSize = 9.sp, lineHeight = 12.sp, modifier = Modifier.fillMaxSize())
+        }
+        VerticalDivider(modifier = Modifier.width(1.dp).fillMaxHeight(), color = Color.DarkGray)
+        Column(modifier = Modifier.weight(1f).padding(8.dp)) {
+            // NUOVO: Riga con il Titolo e il contatore DTN giallo/grigio
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("RETE ATTUALE", color = Color.Gray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+
+                val dtnColor = if (dtnQueueSize > 0) Color.Yellow else Color.Gray
+                Text("DTN: $dtnQueueSize/5", color = dtnColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = topology, color = Color(0xFF03A9F4), fontSize = 10.sp, lineHeight = 14.sp, modifier = Modifier.fillMaxSize())
+        }
     }
 }
