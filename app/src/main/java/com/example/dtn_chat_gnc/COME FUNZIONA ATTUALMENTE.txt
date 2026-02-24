@@ -1,0 +1,95 @@
+A. Livello UI (MainActivity.kt):
+   Gestisce l'interfaccia utente con Jetpack Compose. Visualizza i log, lo stato dei nodi e i controlli Start/Stop. È puramente reattiva: mostra ciò che il MeshManager le comunica.
+
+B. Livello Hardware (MeshManager.kt):
+   Agisce da wrapper per le API Google Nearby Connections. Si occupa di:
+   - Advertising (trasmissione beacon).
+   - Discovery (scansione dispositivi).
+   - Gestione connessioni fisiche (Payload byte array).
+   - Strategia utilizzata: P2P_CLUSTER (permette topologie molti-a-molti).
+
+C. Livello Protocollo (MeshProtocolManager.kt):
+   Il "cervello" del sistema. Implementa l'algoritmo DFS, gestisce l'elezione del leader, mantiene la tabella dei vicini e costruisce l'albero topologico.
+
+FASE 1:
+1. L'utente preme "START".
+2. Il dispositivo inizia contemporaneamente l'Advertising (per farsi trovare) e la Discovery (per trovare altri).
+3. Appena due dispositivi si rilevano, Google Nearby stabilisce una connessione crittografata.
+4. Callback: "onConnectionInitiated" accetta automaticamente la connessione.
+5. Callback: "onConnectionResult" conferma il successo. A questo punto esiste un "canale tubolare" di byte, ma i dispositivi non sanno ancora "chi" c'è dall'altra parte.
+
+FASE 2:
+1. Appena connesso, il "MeshManager" invoca "protocol.sendHelloTo(endpointId)".
+2. Viene inviato un pacchetto JSON di tipo "HELLO" contenente l'ID univoco del nodo (es. "NODO_A").
+3. Chi riceve il pacchetto:
+   - Associa l'Endpoint ID di Google (es. "Xy9Z") all'ID Logico del nodo ("NODO_A").
+   - Aggiunge il nodo alla lista "physicalNeighbors".
+   - Logga: "NUOVO VICINO CONNESSO".
+   - Reset: L'arrivo di un nuovo vicino fa ripartire il timer per l'elezione (perché la topologia è cambiata).
+
+FASE 3:
+Chidiventa leader?
+1. Ogni nodo ha un timer silenzioso (Coroutine).
+2. Se per 20 secondi non c'è traffico di rete (nessun token ricevuto), il nodo presume di essere solo o il primo pronto.
+3. Il nodo si "Auto-elegge":
+   - Crea un oggetto "TopologyNode" radice con il proprio ID.
+   - Genera un "DFS_TOKEN" con un Timestamp attuale.
+   - Invia il token ai suoi vicini fisici.
+Se due nodi si eleggono insieme, quando i loro pacchetti si incrociano,
+vince quello con il Timestamp più vecchio (chi ha iniziato prima) o, in caso di pareggio, l'ID maggiore.
+Il perdente cessa di essere Leader.
+
+FASE 4:
+L'algoritmo è una "Depth First Search"  distribuita tramite passaggio di Token. (Bundle)
+Il Token è un pacchetto che contiene l'intero oggetto "rootTopology" (la mappa parziale).
+
+Passaggio A: Ricezione del Token
+- Un nodo riceve il token. Cerca se stesso nell'albero contenuto nel pacchetto.
+- Se non c'è, è un errore. Se c'è, identifica il mittente come suo "Padre" (Parent) nell'albero.
+
+Passaggio B: Espansione (Discesa)
+- Il nodo guarda i suoi "physicalNeighbors".
+- Confronta i vicini fisici con la lista di tutti gli ID già presenti nel Token ("visited_ids").
+- SE trova un vicino NON visitato:
+  1. Lo aggiunge come "Figlio" (Child) nel nodo dell'albero.
+  2. Invia il Token aggiornato a quel vicino.
+  3. Attende che il Token ritorni.
+
+Passaggio C: Backtracking (Risalita)
+- SE tutti i vicini sono già stati visitati (o non ha vicini):
+  1. Il nodo si segna come "isReady = true" (completato).
+  2. Invia il Token aggiornato indietro al suo Padre.
+
+Passaggio D: Completamento
+- Quando il Token risale fino alla Radice (il Leader) e la Radice non ha più vicini inesplorati:
+  - La mappa è completa.
+  - Il Leader notifica "BOSS ELECTED" e possiede la topologia globale della rete.
+
+FASE 5:
+1. Disconnessione: Se Google Nearby segnala "onDisconnected", il protocollo rimuove il nodo dai vicini.
+2. Controllo Orfani: Se il nodo disconnesso era il mio "Padre" corrente nel processo DFS, sono rimasto "Orfano".
+   - Azione: Dichiaro stato di WARNING/DANGER e tento di avviare immediatamente una nuova elezione per ricostruire la rete.
+3. Pacchetti ALARM: Se viene rilevata una rottura critica, un pacchetto "ALARM" viene inviato in broadcast (flooding) per resettare lo stato di tutti i nodi.
+
+---
+
+STRUTTURE DATI CHIAVE
+
+- TopologyNode:
+  La struttura ricorsiva che forma la mappa.
+  { id: "A", children: [ { id: "B", children: [...] } ] }
+
+- MeshPacket:
+  Il contenitore JSON scambiato.
+  {
+    type: HELLO | DFS_TOKEN | ALARM,
+    senderId: "Chi me lo manda ora",
+    sourceId: "Chi ha iniziato il giro (Leader)",
+    rootTopology: { ...albero... }
+  }
+
+TODO:
+    Spray and wait ->
+        quando
+        aggiungere un nuovo tipo di messaggio -> spray and wait
+
