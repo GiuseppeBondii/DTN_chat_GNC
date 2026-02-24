@@ -14,7 +14,8 @@ class MeshProtocolManager(
     private val onMessageReceived: (MessageData) -> Unit,
     private val onPeersUpdated: (Map<String, String>) -> Unit,
     private val onTopologyUpdated: (String) -> Unit,
-    private val onDtnQueueUpdated: (Int) -> Unit
+    private val initialDtnQueue: List<MessageData>, // <--- NUOVO: Coda iniziale
+    private val onDtnQueueUpdated: (List<MessageData>) -> Unit // <--- Aggiornato: Restituisce l'intera lista
 ) {
     private val physicalNeighbors = mutableSetOf<String>()
     private val endpointMap = mutableMapOf<String, String>()
@@ -30,7 +31,8 @@ class MeshProtocolManager(
     private var lastKnownTree: TopologyNode? = null
 
     // --- VARIABILI DTN ---
-    private val dtnQueue = mutableListOf<MessageData>()
+    // Inizializziamo la coda locale con i dati precedentemente salvati
+    private val dtnQueue = mutableListOf<MessageData>().apply { addAll(initialDtnQueue) }
     private val MAX_DTN_QUEUE_SIZE = 5
 
     fun handleHandshake(endpointId: String, packet: MeshPacket) {
@@ -43,7 +45,6 @@ class MeshProtocolManager(
         if (!physicalNeighbors.contains(neighborNodeId)) {
             physicalNeighbors.add(neighborNodeId)
             onLog("[NET] Connesso: $neighborName ($neighborNodeId)")
-
             startNewDfsRound(true)
             restartElectionTimer()
         }
@@ -55,7 +56,6 @@ class MeshProtocolManager(
         endpointMap.remove(nodeId)
         reverseEndpointMap.remove(endpointId)
         onLog("[NET] Disconnesso: $nodeId")
-
         startNewDfsRound(true)
         updateUiPeers(lastKnownTree)
     }
@@ -123,12 +123,9 @@ class MeshProtocolManager(
                 val isSameRound = (packet.timestamp == activeBundleTimestamp && packet.sourceId == activeBundleSourceId)
 
                 if (isNewer || (packet.timestamp == activeBundleTimestamp && packet.sourceId > activeBundleSourceId)) {
-
-                    // --- MODIFICA UI: AVVISO CAMBIO LEADER ---
                     if (activeBundleSourceId == myId && packet.sourceId != myId) {
                         onLog("[DFS] Persa leadership. Nuovo Leader: ${packet.sourceId.take(4)}")
                     }
-
                     activeBundleTimestamp = packet.timestamp
                     activeBundleSourceId = packet.sourceId
                     currentDfsParentNodeId = null
@@ -182,7 +179,6 @@ class MeshProtocolManager(
                 sendToNode(currentDfsParentNodeId!!, newPacket)
             } else if (packet.sourceId == myId) {
                 onBossElected(true)
-                // --- MODIFICA UI: LOG PULITO SENZA ALBERO ---
                 onLog("[DFS] Elezione completata. Sono il LEADER.")
                 scope.launch { delay(15000); startNewDfsRound(true) }
             }
@@ -203,7 +199,7 @@ class MeshProtocolManager(
         }
 
         val removed = dtnQueue.removeAll { it.id == msg.id }
-        if (removed) onDtnQueueUpdated(dtnQueue.size)
+        if (removed) onDtnQueueUpdated(dtnQueue.toList())
 
         val destInTree = lastKnownTree?.findNode(msg.destinationId) != null
         var routedSuccessfully = false
@@ -273,7 +269,7 @@ class MeshProtocolManager(
         }
 
         dtnQueue.add(msg.copy(isDtn = true))
-        onDtnQueueUpdated(dtnQueue.size)
+        onDtnQueueUpdated(dtnQueue.toList())
     }
 
     private fun delegateDtnBundle(msg: MessageData) {

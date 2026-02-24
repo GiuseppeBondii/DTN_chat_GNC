@@ -26,7 +26,6 @@ class DtnMeshClient(
     private val _topology = MutableStateFlow<String>("Nessuna rete")
     val topology: StateFlow<String> = _topology
 
-    // --- ECCO LA VARIABILE CHE MANCAVA ---
     private val _dtnQueueSize = MutableStateFlow<Int>(0)
     val dtnQueueSize: StateFlow<Int> = _dtnQueueSize
 
@@ -38,23 +37,43 @@ class DtnMeshClient(
     fun start() {
         if (meshManager != null) return
 
-        meshManager = MeshManager(
-            context,
-            scope,
-            onLog = { logMsg -> scope.launch { _logs.emit(logMsg) } },
-            onPeersUpdated = { peerMap ->
-                scope.launch {
-                    val list = peerMap.map { Peer(it.key, it.value) }.filter { it.id != myNodeId }.sortedBy { it.name }
-                    _peers.emit(list)
-                }
-            },
-            onTopologyUpdated = { treeString -> scope.launch { _topology.emit(treeString) } },
-            // Passiamo il valore della coda alla variabile _dtnQueueSize
-            onDtnQueueUpdated = { size -> scope.launch { _dtnQueueSize.emit(size) } }
-        )
+        // Lanciamo asincronamente per poter leggere il file dal disco in modo sicuro
+        scope.launch {
+            // 1. Carichiamo la coda DTN salvata
+            val initialDtnQueue = ChatStorage.loadDtnQueue(context)
 
-        meshManager?.setMessageListener { msg -> scope.launch { _receivedMessages.emit(msg) } }
-        meshManager?.startMesh()
+            // Per sicurezza controlliamo che l'utente non abbia premuto Start 2 volte veloci
+            if (meshManager != null) return@launch
+
+            // 2. Inizializziamo il manager iniettando la coda pregressa
+            meshManager = MeshManager(
+                context,
+                scope,
+                initialDtnQueue = initialDtnQueue,
+                onLog = { logMsg -> scope.launch { _logs.emit(logMsg) } },
+                onPeersUpdated = { peerMap ->
+                    scope.launch {
+                        val list = peerMap.map { Peer(it.key, it.value) }.filter { it.id != myNodeId }.sortedBy { it.name }
+                        _peers.emit(list)
+                    }
+                },
+                onTopologyUpdated = { treeString -> scope.launch { _topology.emit(treeString) } },
+
+                // 3. Callback ogni volta che la coda DTN cambia: inviamo al file e alla UI!
+                onDtnQueueUpdated = { queue ->
+                    scope.launch {
+                        _dtnQueueSize.emit(queue.size)
+                        ChatStorage.saveDtnQueue(context, queue)
+                    }
+                }
+            )
+
+            meshManager?.setMessageListener { msg -> scope.launch { _receivedMessages.emit(msg) } }
+            meshManager?.startMesh()
+
+            // 4. Aggiorniamo subito la UI con il numeretto salvato (es. DTN: 2/5)
+            _dtnQueueSize.emit(initialDtnQueue.size)
+        }
     }
 
     fun stop() {
@@ -65,7 +84,7 @@ class DtnMeshClient(
     fun updateName(newName: String) {
         PrefsManager.saveDisplayName(context, newName)
         stop()
-        start()
+        start() // Questo ricaricherà automaticamente anche la coda senza perderla!
     }
 
     fun sendMessage(destId: String, content: String) {

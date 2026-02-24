@@ -9,11 +9,11 @@ import java.nio.charset.StandardCharsets
 class MeshManager(
     context: Context,
     scope: CoroutineScope,
+    private val initialDtnQueue: List<MessageData>, // <--- Passiamo la coda iniziale
     private val onLog: (String) -> Unit,
     private val onPeersUpdated: (Map<String, String>) -> Unit,
     private val onTopologyUpdated: (String) -> Unit,
-    // NUOVO: Aggiungiamo la callback della coda DTN
-    private val onDtnQueueUpdated: (Int) -> Unit
+    private val onDtnQueueUpdated: (List<MessageData>) -> Unit // <--- Aggiornato a List
 ) {
     private val connectionsClient = Nearby.getConnectionsClient(context)
     private val serviceId = "com.mesh.protocol.CHAT_V1"
@@ -38,7 +38,8 @@ class MeshManager(
         onMessageReceived = { msg -> messageListener?.invoke(msg) },
         onPeersUpdated = onPeersUpdated,
         onTopologyUpdated = onTopologyUpdated,
-        onDtnQueueUpdated = onDtnQueueUpdated // <--- NUOVO
+        initialDtnQueue = initialDtnQueue, // <--- Iniettiamo il salvataggio
+        onDtnQueueUpdated = onDtnQueueUpdated // <--- Aggiornato
     )
 
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {

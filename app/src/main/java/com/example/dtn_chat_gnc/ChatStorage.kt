@@ -9,16 +9,12 @@ import kotlinx.coroutines.withContext
 
 object ChatStorage {
     private const val FILE_NAME = "chat_history.json"
+    private const val DTN_FILE_NAME = "dtn_queue.json" // NUOVO FILE
     private val gson = Gson()
 
-    /**
-     * Salva la mappa dei messaggi su file JSON.
-     * Eseguiamo su Dispatchers.IO per non bloccare la UI.
-     */
     suspend fun saveChats(context: Context, history: Map<String, List<ChatMessage>>) {
         withContext(Dispatchers.IO) {
             try {
-                // Convertiamo la mappa in JSON
                 val json = gson.toJson(history)
                 val file = File(context.filesDir, FILE_NAME)
                 file.writeText(json)
@@ -28,9 +24,6 @@ object ChatStorage {
         }
     }
 
-    /**
-     * Carica la mappa dei messaggi dal file JSON.
-     */
     suspend fun loadChats(context: Context): Map<String, List<ChatMessage>> {
         return withContext(Dispatchers.IO) {
             val file = File(context.filesDir, FILE_NAME)
@@ -43,6 +36,36 @@ object ChatStorage {
             } catch (e: Exception) {
                 e.printStackTrace()
                 emptyMap()
+            }
+        }
+    }
+
+    // --- NUOVE FUNZIONI PER SALVATAGGIO DTN ---
+
+    suspend fun saveDtnQueue(context: Context, queue: List<MessageData>) {
+        withContext(Dispatchers.IO) {
+            try {
+                val json = gson.toJson(queue)
+                val file = File(context.filesDir, DTN_FILE_NAME)
+                file.writeText(json)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    suspend fun loadDtnQueue(context: Context): List<MessageData> {
+        return withContext(Dispatchers.IO) {
+            val file = File(context.filesDir, DTN_FILE_NAME)
+            if (!file.exists()) return@withContext emptyList()
+
+            try {
+                val json = file.readText()
+                val type = object : TypeToken<List<MessageData>>() {}.type
+                gson.fromJson(json, type) ?: emptyList()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                emptyList()
             }
         }
     }
