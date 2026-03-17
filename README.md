@@ -40,6 +40,5 @@ L'architettura segue il principio della *Separation of Concerns* (Livelli UI, St
 4. Compila ed esegui l'app su almeno due o più dispositivi fisici Android (gli emulatori non supportano correttamente l'hardware Bluetooth/Wi-Fi Direct necessario per Nearby Connections).
 5. Assicurati di concedere i permessi di localizzazione e dispositivi vicini all'avvio dell'app.
 
-Corso di Laurea: Informatica (Triennale), Dipartimento di Informatica Scienza e Ingegneria - Università di Bologna (A.A. 2024/2025)
 Se sei interessato ai dettagli algoritmici, teorici e alla valutazione del protocollo, puoi consultare il documento completo della tesi (PDF) disponibile all'interno di questa repository.
 
