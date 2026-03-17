@@ -20,7 +20,7 @@ Il cuore del progetto è un **motore di routing ibrido** che si adatta alla topo
     * **Implicit ACK:** Soppressione passiva delle repliche ridondanti per risparmiare larghezza di banda.
 * **UI Reattiva:** Interfaccia utente costruita in Jetpack Compose che si aggiorna in tempo reale con le mutazioni della topologia di rete.
 
-## 🛠 Tecnologie Utilizzate
+##  Tecnologie Utilizzate
 
 L'architettura segue il principio della *Separation of Concerns* (Livelli UI, Storage, Hardware Wrapper, Protocol Core).
 
@@ -40,9 +40,6 @@ L'architettura segue il principio della *Separation of Concerns* (Livelli UI, St
 4. Compila ed esegui l'app su almeno due o più dispositivi fisici Android (gli emulatori non supportano correttamente l'hardware Bluetooth/Wi-Fi Direct necessario per Nearby Connections).
 5. Assicurati di concedere i permessi di localizzazione e dispositivi vicini all'avvio dell'app.
 
-🎓 Riferimenti Accademici
-Autore: Giuseppe Bondi
-Relatore: Chiar.mo Prof. Angelo Trotta
 Corso di Laurea: Informatica (Triennale), Dipartimento di Informatica Scienza e Ingegneria - Università di Bologna (A.A. 2024/2025)
 Se sei interessato ai dettagli algoritmici, teorici e alla valutazione del protocollo, puoi consultare il documento completo della tesi (PDF) disponibile all'interno di questa repository.
 
