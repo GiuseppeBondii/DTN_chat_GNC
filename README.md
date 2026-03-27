@@ -1,3 +1,6 @@
+# X chi sta cercando i ringraziamenti della mia tesi
+Ringrazio tutte le persone che ritengono un rimgraziamento nei loro confronti sia gradita per qualsiasi cosa abbiamo fatto per titemere giusto cbe vemgano rimgraziati
+
 # DTN_chat_GNC: Routing Ibrido MANET-DTN su Android
 
 > Proof-of-Concept di un'applicazione di messaggistica decentralizzata per scenari off-grid, basata su un protocollo di routing ibrido a livello applicativo (overlay network).
