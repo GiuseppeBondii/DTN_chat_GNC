@@ -1,5 +1,5 @@
 # X chi sta cercando i ringraziamenti della mia tesi
-Ringrazio tutte le persone che ritengono un rimgraziamento nei loro confronti sia gradito per qualsiasi cosa abbiamo fatto per ritenere giusto cbe vemgano rimgraziati
+Ringrazio tutte le persone che ritengono un ringraziamento nei loro confronti sia dovuto o gradito per qualsiasi cosa abbiamo fatto per ritenere giusto che vengano ringraziati
 
 # DTN_chat_GNC: Routing Ibrido MANET-DTN su Android
 
